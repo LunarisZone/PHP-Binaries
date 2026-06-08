@@ -22,6 +22,7 @@ OPENSSL_VERSION="3.6.0"
 LIBZIP_VERSION="1.11.4"
 SQLITE3_VERSION="3510100" #3.51.1
 LIBDEFLATE_VERSION="c8c56a20f8f621e6a966b716b31f1dedab6a41e3" #1.25 - see above note about "v" prefixes
+LIBSNAPPY_VERSION="1.2.2"
 
 EXT_PMMPTHREAD_VERSION="6.3.0"
 EXT_YAML_VERSION="2.3.0"
@@ -30,12 +31,15 @@ EXT_CHUNKUTILS2_VERSION="0.3.5"
 EXT_XDEBUG_VERSION="3.5.0"
 EXT_IGBINARY_VERSION="3.2.16"
 EXT_CRYPTO_VERSION="999b3c7edbc7f8ca4fdeb0bb4bbae488ad0daf07" #release not tagged
+EXT_SNAPPY_VERSION="0.2.3"
 EXT_RECURSIONGUARD_VERSION="0.1.0"
 EXT_LIBDEFLATE_VERSION="0.2.1"
 EXT_MORTON_VERSION="0.1.2"
 EXT_XXHASH_VERSION="0.2.0"
 EXT_ARRAYDEBUG_VERSION="0.2.1"
 EXT_ENCODING_VERSION="1.0.0"
+EXT_REDIS_VERSION="6.2.0"
+EXT_MONGODB_VERSION="2.3.3"
 
 EXT_IGBINARY_VERSION_PHP85="3.2.17RC1"
 
@@ -500,7 +504,7 @@ echo "}" >> test.c
 type $CC >> "$DIR/install.log" 2>&1 || { write_error "Please install \"$CC\""; exit 1; }
 
 if [ -z "$THREADS" ]; then
-	write_out "WARNING" "Only 1 thread is used by default. Increase thread count using -j (e.g. -j 4) to compile faster."	
+	write_out "WARNING" "Only 1 thread is used by default. Increase thread count using -j (e.g. -j 4) to compile faster."
 	THREADS=1;
 fi
 [ -z "$march" ] && march=native;
@@ -560,12 +564,12 @@ rm test >> "$DIR/install.log" 2>&1
 
 export CC="$CC"
 export CXX="$CXX"
-export CFLAGS="-O2 -fPIC $CFLAGS"
-export CXXFLAGS="$CFLAGS $CXXFLAGS"
+export CFLAGS="-O2 -fPIC -D_GNU_SOURCE $CFLAGS"
+export CXXFLAGS="-O2 -fPIC -D_GNU_SOURCE $CXXFLAGS"
 export LDFLAGS="$LDFLAGS"
-export CPPFLAGS="$CPPFLAGS"
+export CPPFLAGS="-D_GNU_SOURCE $CPPFLAGS"
 export LIBRARY_PATH="$INSTALL_DIR/lib:$LIBRARY_PATH"
-export PKG_CONFIG_PATH="$INSTALL_DIR/lib/pkgconfig"
+export PKG_CONFIG_PATH="$INSTALL_DIR/lib/pkgconfig:$PKG_CONFIG_PATH"
 
 #some stuff (like curl) makes assumptions about library paths that break due to different behaviour in pkgconf vs pkg-config
 export PKG_CONFIG_ALLOW_SYSTEM_LIBS="yes"
@@ -587,6 +591,29 @@ write_download
 download_github_src "php/php-src" "php-$PHP_VERSION" "php" | tar -zx >> "$DIR/install.log" 2>&1
 mv php-src-php-$PHP_VERSION php
 write_done
+
+# Add missing socket constants for older PHP versions only
+if [ "$PHP_VERSION_ID" -lt 80400 ] && [ -f "$BUILD_DIR/php/ext/sockets/sockets.stub.php" ]; then
+	cat >> "$BUILD_DIR/php/ext/sockets/sockets.stub.php" <<'EOF'
+
+#ifdef IP_MTU_DISCOVER
+/**
+ * @var int
+ * @cvalue IP_MTU_DISCOVER
+ */
+const IP_MTU_DISCOVER = UNKNOWN;
+#endif
+
+#ifdef IP_PMTUDISC_DO
+/**
+ * @var int
+ * @cvalue IP_PMTUDISC_DO
+ */
+const IP_PMTUDISC_DO = UNKNOWN;
+#endif
+
+EOF
+fi
 
 function build_zlib {
 	if [ "$DO_STATIC" == "yes" ]; then
@@ -793,6 +820,42 @@ function build_yaml {
 	else
 		write_caching
 		cd "$yaml_dir"
+	fi
+	write_install
+	make install >> "$DIR/install.log" 2>&1
+	cd ..
+	write_done
+}
+
+function build_snappy {
+	if [ "$DO_STATIC" == "yes" ]; then
+		local CMAKE_SNAPPY_EXTRA_FLAGS="-DBUILD_SHARED_LIBS=OFF"
+	else
+		local CMAKE_SNAPPY_EXTRA_FLAGS="-DBUILD_SHARED_LIBS=ON"
+	fi
+
+	write_library snappy "$LIBSNAPPY_VERSION"
+	local snappy_dir="./snappy-$LIBSNAPPY_VERSION"
+
+	if cant_use_cache "$snappy_dir"; then
+		rm -rf "$snappy_dir"
+		write_download
+		download_github_src "google/snappy" "$LIBSNAPPY_VERSION" "snappy" | tar -zx >> "$DIR/install.log" 2>&1
+		write_configure
+		cd "$snappy_dir"
+		cmake . \
+			-DCMAKE_INSTALL_PREFIX="$INSTALL_DIR" \
+			-DCMAKE_PREFIX_PATH="$INSTALL_DIR" \
+			-DCMAKE_INSTALL_LIBDIR=lib \
+			-DSNAPPY_BUILD_TESTS=OFF \
+			-DSNAPPY_BUILD_BENCHMARKS=OFF \
+			$CMAKE_GLOBAL_EXTRA_FLAGS \
+			$CMAKE_SNAPPY_EXTRA_FLAGS >> "$DIR/install.log" 2>&1
+		write_compile
+		make -j $THREADS >> "$DIR/install.log" 2>&1 && mark_cache
+	else
+		write_caching
+		cd "$snappy_dir"
 	fi
 	write_install
 	make install >> "$DIR/install.log" 2>&1
@@ -1072,6 +1135,7 @@ build_gmp
 build_openssl
 build_curl
 build_yaml
+build_snappy
 build_leveldb
 if [ "$COMPILE_GD" == "yes" ]; then
 	build_libpng
@@ -1126,6 +1190,12 @@ get_github_extension "yaml" "$EXT_YAML_VERSION" "php" "pecl-file_formats-yaml"
 #get_pecl_extension "yaml" "$EXT_YAML_VERSION"
 
 get_github_extension "igbinary" "$EXT_IGBINARY_VERSION" "igbinary" "igbinary"
+
+get_github_extension "snappy" "$EXT_SNAPPY_VERSION" "kjdev" "php-ext-snappy"
+
+get_github_extension "redis" "$EXT_REDIS_VERSION" "phpredis" "phpredis"
+
+get_pecl_extension "mongodb" "$EXT_MONGODB_VERSION"
 
 get_github_extension "recursionguard" "$EXT_RECURSIONGUARD_VERSION" "pmmp" "ext-recursionguard"
 
@@ -1184,6 +1254,10 @@ cd php
 rm -f ./aclocal.m4 >> "$DIR/install.log" 2>&1
 rm -rf ./autom4te.cache/ >> "$DIR/install.log" 2>&1
 rm -f ./configure >> "$DIR/install.log" 2>&1
+
+if [ -f "$BUILD_DIR/php/ext/snappy/config.m4" ]; then
+	patch "$BUILD_DIR/php/ext/snappy/config.m4" "$DIR/patches/config-snappy.m4.patch" >> "$DIR/install.log" 2>&1 || true
+fi
 
 ./buildconf --force >> "$DIR/install.log" 2>&1
 
@@ -1260,7 +1334,6 @@ RANLIB=$RANLIB CFLAGS="$CFLAGS $FLAGS_LTO" CXXFLAGS="$CXXFLAGS $FLAGS_LTO" LDFLA
 --exec-prefix="$INSTALL_DIR" \
 --with-curl \
 --with-zlib \
---with-zlib \
 --with-gmp \
 --with-yaml \
 --with-openssl \
@@ -1269,6 +1342,7 @@ RANLIB=$RANLIB CFLAGS="$CFLAGS $FLAGS_LTO" CXXFLAGS="$CXXFLAGS $FLAGS_LTO" LDFLA
 $HAS_LIBJPEG \
 $HAS_GD \
 --with-leveldb="$INSTALL_DIR" \
+--with-snappy-includedir="$INSTALL_DIR" \
 --without-readline \
 $HAS_DEBUG \
 --enable-chunkutils2 \
@@ -1308,6 +1382,9 @@ $HAVE_MYSQLI \
 --enable-opcache=$HAVE_OPCACHE \
 --enable-opcache-jit=$HAVE_OPCACHE_JIT \
 --enable-igbinary \
+--enable-snappy \
+--enable-redis \
+--disable-redis-session \
 --with-crypto \
 --enable-recursionguard \
 --enable-xxhash \
@@ -1440,6 +1517,19 @@ if [[ "$HAVE_XDEBUG" == "yes" ]]; then
 	write_out INFO "Xdebug is included, but disabled by default. To enable it, change 'xdebug.mode' in your php.ini file."
 fi
 
+if [ -d "$BUILD_DIR/php/ext/mongodb" ]; then
+	write_library "mongodb" "$EXT_MONGODB_VERSION"
+	cd "$BUILD_DIR/php/ext/mongodb"
+	write_configure
+	"$INSTALL_DIR/bin/phpize" >> "$DIR/install.log" 2>&1
+	./configure --with-php-config="$INSTALL_DIR/bin/php-config" >> "$DIR/install.log" 2>&1
+	write_compile
+	make -j $THREADS >> "$DIR/install.log" 2>&1
+	write_install
+	make install >> "$DIR/install.log" 2>&1
+	echo "extension=mongodb.so" >> "$INSTALL_DIR/bin/php.ini"
+	write_done
+fi
 
 cd "$DIR"
 if [ "$DO_CLEANUP" == "yes" ]; then

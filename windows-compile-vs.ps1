@@ -28,6 +28,10 @@ $PHP_XDEBUG_VER="3.5.0"
 $PHP_ARRAYDEBUG_VER="0.2.1"
 $PHP_ENCODING_VER="1.0.0"
 
+$PHP_REDIS_VER="6.2.0"
+$PHP_MONGODB_VER="2.3.3"
+$PHP_SNAPPY_VER="0.2.3"
+
 $PHP_IGBINARY_VER_PHP85="3.2.17RC1"
 
 function pm-echo {
@@ -436,6 +440,37 @@ function build-libdeflate {
     Pop-Location
 }
 
+function build-snappy {
+    write-library "snappy" "1.2.2"
+
+    write-download
+    $file = download-file "https://github.com/google/snappy/archive/refs/tags/1.2.2.zip" "snappy"
+
+    write-extracting
+    unzip-file $file $pwd
+    Move-Item snappy-* snappy >> $log_file 2>&1
+
+    Push-Location snappy
+
+    write-configure
+    sdk-command "cmake -G `"$CMAKE_TARGET`" $CMAKE_TOOLSET_FLAG^`
+        -DCMAKE_INSTALL_PREFIX=`"$DEPS_DIR`"^`
+        -DCMAKE_PREFIX_PATH=`"$DEPS_DIR`"^`
+        -DSNAPPY_BUILD_TESTS=OFF^`
+        -DSNAPPY_BUILD_BENCHMARKS=OFF^`
+        -DBUILD_SHARED_LIBS=ON^`
+        `"$pwd`" || exit 1"
+
+    write-compile
+    sdk-command "msbuild ALL_BUILD.vcxproj /p:Configuration=$MSBUILD_CONFIGURATION /m || exit 1"
+
+    write-install
+    sdk-command "msbuild INSTALL.vcxproj /p:Configuration=$MSBUILD_CONFIGURATION /m || exit 1"
+
+    write-done
+    Pop-Location
+}
+
 function download-php {
     write-library "PHP" $PHP_VER
     write-download
@@ -477,6 +512,8 @@ function download-php-extensions {
     get-github-extension "xdebug"                $PHP_XDEBUG_VER                "xdebug"   "xdebug"
     get-github-extension "arraydebug"            $PHP_ARRAYDEBUG_VER            "pmmp"     "ext-arraydebug"
     get-github-extension "encoding"              $PHP_ENCODING_VER              "pmmp"     "ext-encoding"
+    get-github-extension "redis"                 $PHP_REDIS_VER                 "phpredis" "phpredis"
+    get-github-extension "snappy"                $PHP_SNAPPY_VER                "kjdev"    "php-ext-snappy"
 
     write-library "php-ext crypto" $PHP_CRYPTO_VER
     write-download
@@ -507,6 +544,7 @@ cd $LIB_BUILD_DIR >> $log_file 2>&1
 
 build-pthreads4w
 build-yaml
+build-snappy
 #these two both need zlib from the standard deps
 build-leveldb
 build-libdeflate
@@ -549,6 +587,8 @@ sdk-command "configure^`
     --enable-opcache-jit=$PHP_JIT_ENABLE_ARG^`
     --enable-phar^`
     --enable-recursionguard=shared^`
+    --enable-redis=shared^`
+    --enable-snappy=shared^`
     --enable-sockets^`
     --enable-tokenizer^`
     --enable-xmlreader^`
@@ -565,6 +605,7 @@ sdk-command "configure^`
     --with-iconv^`
     --with-leveldb=shared^`
     --with-libdeflate=shared^`
+    --with-snappy-includedir=`"$DEPS_DIR\include`"^`
     --with-libxml^`
     --with-mysqli=shared^`
     --with-mysqlnd^`
@@ -627,6 +668,8 @@ append-file-utf8 "extension=php_leveldb.dll" $php_ini
 append-file-utf8 "extension=php_crypto.dll" $php_ini
 append-file-utf8 "extension=php_libdeflate.dll" $php_ini
 append-file-utf8 "extension=php_encoding.dll" $php_ini
+append-file-utf8 "extension=php_redis.dll" $php_ini
+append-file-utf8 "extension=php_snappy.dll" $php_ini
 append-file-utf8 "igbinary.compact_strings=0" $php_ini
 if ($PHP_VERSION_ID -lt 80500) {
     append-file-utf8 "zend_extension=php_opcache.dll" $php_ini
